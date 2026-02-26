@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+useradd --system --no-create-home --shell /usr/sbin/nologin ruptela 2>/dev/null || true
+mkdir -p /etc/ruptela
+
+#DEBHELPER#

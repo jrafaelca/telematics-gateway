@@ -1,0 +1,29 @@
+[package]
+name = "ruptela-listener"
+version = "0.1.0"
+edition = "2024"
+authors = ["Jose Carrizales <jrafaelca@gmail.com>"]
+description = "Async TCP listener for Ruptela GPS devices — parses binary frames, validates CRC16, and publishes records to a Valkey stream"
+license = "LicenseRef-proprietary"
+publish = false
+
+[package.metadata.deb]
+maintainer = "Jose Carrizales <jrafaelca@gmail.com>"
+copyright = "2025, Jose Carrizales"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/ruptela-listener", "usr/ruptela/listener", "755"],
+    ["debian/listener.conf", "etc/ruptela/listener", "644"],
+]
+conf-files = ["/etc/ruptela/listener"]
+maintainer-scripts = "debian"
+systemd-units = [{ unit-name = "ruptela-listener", enable = true }]
+
+[dependencies]
+shared = { path = "../shared" }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,0 +1,17 @@
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+
+# Added by cargo
+
+/target
+
+# Distribution binaries (built via scripts/build-linux.sh)
+dist/

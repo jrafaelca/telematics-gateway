@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/shared", "crates/ruptela-listener"]
+resolver = "2"

@@ -1,0 +1,21 @@
+services:
+    valkey:
+        image: 'valkey/valkey:alpine'
+        ports:
+            - '6379:6379'
+        volumes:
+            - 'listener-valkey:/data'
+        networks:
+            - listener
+        healthcheck:
+            test: [ 'CMD', 'valkey-cli', 'ping' ]
+            retries: 3
+            timeout: 5s
+
+networks:
+    listener:
+        driver: bridge
+
+volumes:
+    listener-valkey:
+        driver: local
