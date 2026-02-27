@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cargo build --workspace                          # compile all crates
-cargo run -p ruptela-listener                    # start listener on port 5000
+cargo run -p ruptela-listener                    # start listener on port 7700
 cargo test --workspace                           # run all tests
 cargo test --workspace <test_name>               # run a single test (e.g. cargo test test_crc16_ack_body)
-cargo run -p ruptela-listener --example x01_test # send a cmd=0x01 sample packet to the running listener
-cargo run -p ruptela-listener --example x44_test # send a cmd=0x44 sample packet to the running listener
+cargo run -p ruptela-listener --example device_records          # simulate device sending cmd=0x01 Records
+cargo run -p ruptela-listener --example device_extended_records  # simulate device sending cmd=0x44 ExtendedRecords
+cargo run -p ruptela-listener --example device_cmd_delivery      # simulate full server→device command delivery
 
 docker compose up --build                        # listener + valkey via Docker Compose
 ```

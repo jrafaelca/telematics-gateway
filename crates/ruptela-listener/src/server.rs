@@ -21,8 +21,10 @@ use tokio::time::timeout;
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
+use crate::commands;
 use crate::crc::crc16;
 use crate::normalize;
+use crate::presence;
 use crate::protocol::{Packet, Payload, parse_packet};
 use shared::publisher::Publisher;
 
@@ -30,12 +32,22 @@ use shared::publisher::Publisher;
 ///
 /// Publishing is fire-and-forget: each record is spawned as an independent
 /// task so a slow Valkey write cannot stall the read loop.
+///
+/// After ACKing each device packet, pending server→device commands stored in
+/// `commands:{imei}` are delivered via [`commands::deliver_pending_commands`].
 pub async fn handle_connection(
     mut socket: TcpStream,
     addr: SocketAddr,
     publisher: Arc<Publisher>,
+    mut redis_conn: redis::aio::ConnectionManager,
 ) {
     tracing::info!(peer = %addr, "device connected");
+
+    let connected_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let mut known_imei: Option<u64> = None;
 
     loop {
         // 1. Read the 2-byte packet length.
@@ -90,20 +102,44 @@ pub async fn handle_connection(
         // 5. Parse and publish.
         match parse_packet(body) {
             Ok(packet) => {
+                let imei = packet.imei;
+
+                // On the first packet we learn the IMEI — register the connection.
+                if known_imei.is_none() {
+                    known_imei = Some(imei);
+                    presence::on_connect(imei, addr, connected_at, &mut redis_conn).await;
+                }
+
                 log_packet(&packet, packet_len, addr);
                 send_ack(&mut socket, packet.command_id).await;
 
-                let records = match &packet.payload {
+                let num_records = match &packet.payload {
                     Payload::Records { records, .. }
-                    | Payload::ExtendedRecords { records, .. } => Some(records),
-                    Payload::Unknown { .. } => None,
-                };
-                if let Some(records) = records {
-                    for record in records {
-                        let normalized = normalize::normalize(packet.imei, record, received_at);
-                        let pub_clone = publisher.clone();
-                        tokio::spawn(async move { pub_clone.publish(&normalized).await });
+                    | Payload::ExtendedRecords { records, .. } => {
+                        for record in records {
+                            let normalized = normalize::normalize(imei, record, received_at);
+                            let pub_clone = publisher.clone();
+                            tokio::spawn(async move { pub_clone.publish(&normalized).await });
+                        }
+                        records.len()
                     }
+                    Payload::Unknown { .. } => 0,
+                };
+
+                presence::on_packet(imei, num_records, &mut redis_conn).await;
+
+                // Deliver any pending server→device commands while the device
+                // is still listening (half-duplex window after our ACK).
+                let delivered = commands::deliver_pending_commands(
+                    &mut socket,
+                    addr,
+                    imei,
+                    &mut redis_conn,
+                )
+                .await;
+
+                if delivered > 0 {
+                    presence::on_commands_delivered(imei, delivered, &mut redis_conn).await;
                 }
             }
             Err(e) => {
@@ -111,6 +147,10 @@ pub async fn handle_connection(
                 send_nack(&mut socket).await;
             }
         }
+    }
+
+    if let Some(imei) = known_imei {
+        presence::on_disconnect(imei, connected_at, &mut redis_conn).await;
     }
 
     tracing::info!(peer = %addr, "device disconnected");

@@ -4,8 +4,10 @@ use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::signal::unix::{signal, SignalKind};
 
+mod commands;
 mod crc;
 mod normalize;
+mod presence;
 mod protocol;
 mod server;
 
@@ -17,7 +19,7 @@ struct Args {
     host: String,
 
     /// Bind port
-    #[arg(long, default_value_t = 5000)]
+    #[arg(long, default_value_t = 7700)]
     port: u16,
 
     /// Valkey/Redis connection URL
@@ -46,11 +48,13 @@ async fn main() {
     let addr = format!("{}:{}", args.host, args.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
 
-    let publisher = Arc::new(
-        shared::publisher::Publisher::new(&args.redis_url, args.shards)
-            .await
-            .expect("Failed to connect to Valkey/Redis"),
-    );
+    let publisher = shared::publisher::Publisher::new(&args.redis_url, args.shards)
+        .await
+        .expect("Failed to connect to Valkey/Redis");
+    // Extract the ConnectionManager before wrapping in Arc so it can be
+    // cheaply cloned per-connection without going through Arc<Publisher>.
+    let redis_manager = publisher.connection_manager();
+    let publisher = Arc::new(publisher);
 
     let semaphore = Arc::new(Semaphore::new(args.max_connections));
 
@@ -64,9 +68,10 @@ async fn main() {
                 match result {
                     Ok((socket, peer_addr)) => {
                         let publisher = publisher.clone();
+                        let redis_conn = redis_manager.clone();
                         let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
                         tokio::spawn(async move {
-                            server::handle_connection(socket, peer_addr, publisher).await;
+                            server::handle_connection(socket, peer_addr, publisher, redis_conn).await;
                             drop(permit);
                         });
                     }

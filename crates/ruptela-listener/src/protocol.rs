@@ -96,6 +96,7 @@ pub struct Record {
 
 /// A single IO element: an identifier and its raw integer value.
 #[derive(Debug)]
+#[allow(dead_code)] // fields will be used when IO normalization is implemented
 pub struct IoElement {
     /// IO identifier (1 byte for `0x01` packets, 2 bytes for `0x44`).
     pub id: u16,

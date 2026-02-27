@@ -16,7 +16,7 @@ fn from_hex(s: &str) -> Vec<u8> {
 
 #[tokio::main]
 async fn main() {
-    let addr = "127.0.0.1:5000";
+    let addr = "127.0.0.1:7700";
     let packet = from_hex(PACKET_HEX);
 
     println!("Conectando a {}...", addr);

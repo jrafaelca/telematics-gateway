@@ -28,6 +28,14 @@ impl Publisher {
         Ok(Self { manager, num_shards })
     }
 
+    /// Returns a cloned [`redis::aio::ConnectionManager`] that can be used to
+    /// issue arbitrary Redis commands (e.g. for command delivery in listeners).
+    ///
+    /// The clone is cheap — both share the same underlying multiplexed connection.
+    pub fn connection_manager(&self) -> redis::aio::ConnectionManager {
+        self.manager.clone()
+    }
+
     /// Appends `record` to the stream `devices:records:{IMEI % shards}`.
     ///
     /// Errors are logged but not propagated; a failed publish does not affect
