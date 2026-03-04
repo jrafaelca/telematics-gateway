@@ -7,11 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cargo build --workspace                          # compile all crates
 cargo run -p ruptela-listener                    # start listener on port 7700
+cargo run -p galileosky-listener                 # start listener on port 7800
 cargo test --workspace                           # run all tests
 cargo test --workspace <test_name>               # run a single test (e.g. cargo test test_crc16_ack_body)
 cargo run -p ruptela-listener --example device_records          # simulate device sending cmd=0x01 Records
 cargo run -p ruptela-listener --example device_extended_records  # simulate device sending cmd=0x44 ExtendedRecords
 cargo run -p ruptela-listener --example device_cmd_delivery      # simulate full server→device command delivery
+cargo run -p galileosky-listener --example device_head_packet    # simulate HeadPack (0x01) with IMEI
+cargo run -p galileosky-listener --example device_main_packet    # simulate HeadPack + MainPack with GPS
+cargo run -p galileosky-listener --example device_cmd_delivery   # simulate full server→device command delivery
 
 docker compose up --build                        # listener + valkey via Docker Compose
 ```
@@ -29,15 +33,26 @@ listeners/
     │       ├── lib.rs
     │       ├── normalize.rs      ← NormalizedRecord + to_fields() + stream_key()
     │       └── publisher.rs      ← Publisher (Valkey XADD via ConnectionManager)
-    └── ruptela-listener/         ← TCP listener binary
+    ├── ruptela-listener/         ← TCP listener binary (port 7700)
+    │   ├── src/
+    │   │   ├── main.rs           ← CLI args, tracing init, connection semaphore
+    │   │   ├── server.rs         ← handle_connection, send_ack, send_nack
+    │   │   ├── crc.rs            ← CRC-CCITT Kermit (poly 0x8408)
+    │   │   ├── protocol.rs       ← parse_packet, Record, IoElement
+    │   │   └── normalize.rs      ← normalize() converts Record → NormalizedRecord
+    │   ├── tests/                ← integration tests (crc, protocol)
+    │   └── examples/             ← device simulators
+    └── galileosky-listener/      ← TCP listener binary (port 7800)
         ├── src/
         │   ├── main.rs           ← CLI args, tracing init, connection semaphore
-        │   ├── server.rs         ← handle_connection, send_ack, send_nack
-        │   ├── crc.rs            ← CRC-CCITT Kermit (poly 0x8408)
-        │   ├── protocol.rs       ← parse_packet, Record, IoElement
-        │   └── normalize.rs      ← normalize() converts Record → NormalizedRecord
-        ├── tests/                ← integration tests (crc, protocol)
-        └── examples/             ← device simulators (x01_test, x44_test)
+        │   ├── server.rs         ← handle_connection, send_ack (3 bytes)
+        │   ├── crc.rs            ← CRC-16 MODBUS (poly 0xA001, init 0xFFFF)
+        │   ├── protocol.rs       ← parse_packet, TagSet, Coordinates, SpeedDir
+        │   ├── normalize.rs      ← normalize() converts TagSet → NormalizedRecord
+        │   ├── presence.rs       ← devices:{imei} hash in Redis
+        │   └── commands.rs       ← server→device command delivery (Galileosky format)
+        ├── tests/                ← integration tests (crc, protocol, normalize)
+        └── examples/             ← device simulators
 ```
 
 ## Architecture

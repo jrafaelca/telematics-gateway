@@ -305,6 +305,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "galileosky-listener"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "redis",
+ "serde_json",
+ "shared",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

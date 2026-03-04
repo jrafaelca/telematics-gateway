@@ -1,0 +1,30 @@
+[package]
+name = "galileosky-listener"
+version = "0.1.0"
+edition = "2024"
+authors = ["Jose Carrizales <jrafaelca@gmail.com>"]
+description = "Async TCP listener for Galileosky GPS devices — parses TLV binary frames, validates CRC-16 MODBUS, and publishes records to a Valkey stream"
+license = "LicenseRef-proprietary"
+publish = false
+
+[package.metadata.deb]
+maintainer = "Jose Carrizales <jrafaelca@gmail.com>"
+copyright = "2025, Jose Carrizales"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/galileosky-listener", "usr/galileosky/listener", "755"],
+    ["debian/listener.conf", "etc/galileosky/listener", "644"],
+]
+conf-files = ["/etc/galileosky/listener"]
+maintainer-scripts = "debian"
+systemd-units = [{ unit-name = "galileosky-listener", enable = true }]
+
+[dependencies]
+shared = { path = "../shared" }
+tokio = { version = "1", features = ["full"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
