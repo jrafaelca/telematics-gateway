@@ -16,6 +16,9 @@ cargo run -p ruptela-listener --example device_cmd_delivery      # simulate full
 cargo run -p galileosky-listener --example device_head_packet    # simulate HeadPack (0x01) with IMEI
 cargo run -p galileosky-listener --example device_main_packet    # simulate HeadPack + MainPack with GPS
 cargo run -p galileosky-listener --example device_cmd_delivery   # simulate full server→device command delivery
+cargo run -p teltonika-listener --example device_records          # simulate Codec 8 AVL packet with 2 GPS records
+cargo run -p teltonika-listener --example device_extended_records  # simulate Codec 8 Extended packet with IO elements
+cargo run -p teltonika-listener --example device_cmd_delivery      # simulate full server→device command delivery (Codec 12)
 
 docker compose up --build                        # listener + valkey via Docker Compose
 ```
@@ -42,7 +45,20 @@ listeners/
     │   │   └── normalize.rs      ← normalize() converts Record → NormalizedRecord
     │   ├── tests/                ← integration tests (crc, protocol)
     │   └── examples/             ← device simulators
-    └── galileosky-listener/      ← TCP listener binary (port 7800)
+    ├── galileosky-listener/      ← TCP listener binary (port 7800)
+    │   └── ...
+    └── teltonika-listener/       ← TCP listener binary (port 7900)
+        ├── src/
+        │   ├── main.rs           ← CLI args, tracing init, connection semaphore
+        │   ├── server.rs         ← handle_connection, IMEI handshake, send_response (4-byte record count)
+        │   ├── crc.rs            ← CRC-16/IBM (poly 0xA001, init 0x0000)
+        │   ├── protocol.rs       ← parse_packet, AvlPacket, AvlRecord, IoElement (Codec 8 + 8E)
+        │   ├── normalize.rs      ← normalize() converts AvlRecord → NormalizedRecord
+        │   └── presence.rs       ← devices:{imei} hash in Redis
+        ├── tests/                ← integration tests (crc, protocol, normalize)
+        └── examples/             ← device simulators
+            ├── device_records.rs         (Codec 8, 2 records)
+            └── device_extended_records.rs (Codec 8 Extended, IO elements)
         ├── src/
         │   ├── main.rs           ← CLI args, tracing init, connection semaphore
         │   ├── server.rs         ← handle_connection, send_ack (3 bytes)

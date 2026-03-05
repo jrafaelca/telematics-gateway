@@ -8,28 +8,21 @@
 //!
 //! Key: `commands:{imei}` (Hash)
 //! Field: a UUID string
-//! Value: JSON — `{"cmd_id": 108, "payload": "text", "status": "pending"}`
+//! Value: JSON — `{"cmd_text": "text", "status": "pending"}`
 //!
 //! After successful delivery the status field is updated to `"delivered"`.
 //!
 //! # Ruptela server→device framing
 //!
+//! Commands are sent as SMS via GPRS (command ID `0x6C`, 108), which is the
+//! standard mechanism for sending text commands to Ruptela devices over TCP.
+//!
 //! ```text
-//! [2B: packet_len (BE)] [1B: command_id] [N B: payload] [2B: CRC16]
+//! [2B: packet_len (BE)] [1B: 0x6C] [cmd_text bytes] [2B: CRC16]
 //! ```
-//! CRC16 is computed over `command_id + payload` (Kermit 0x8408, same as
-//! device→server packets). No IMEI is sent in server-originated frames.
 //!
-//! # Supported commands
-//!
-//! | cmd_id | Name          | payload format               | Device ACK cmd |
-//! |--------|---------------|------------------------------|----------------|
-//! | 0x6C (108) | SMS via GPRS | UTF-8 text, up to 160 chars | 0x07 (7)      |
-//! | 0x75 (117) | Set IO Value | 4B IO_ID + 4B IO_value (BE) | 0x11 (17), byte 0 = success |
-//! | other  | unknown       | raw bytes from `payload` field | not validated |
-//!
-//! For binary payloads (e.g. cmd 117) store the `payload` field in the JSON as
-//! a JSON array of byte values: `[0,0,0,1, 0,0,0,1]`.
+//! CRC16 is computed over `command_id + payload` (Kermit 0x8408).
+//! The device acknowledges with command ID `0x07` (7).
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -97,27 +90,22 @@ pub async fn deliver_pending_commands(
             continue;
         }
 
-        let cmd_id = match val.get("cmd_id").and_then(|v| v.as_u64()) {
-            Some(id) if id <= 255 => id as u8,
-            _ => {
-                tracing::warn!(peer = %addr, uuid = %uuid, "missing or invalid cmd_id");
+        let cmd_text = match val.get("cmd_text").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => {
+                tracing::warn!(peer = %addr, uuid = %uuid, "missing cmd_text");
                 continue;
             }
         };
 
-        let payload_bytes = extract_payload(&val);
-
-        // Build and send the server→device frame.
-        let frame = build_frame(cmd_id, &payload_bytes);
+        let frame = build_frame(&cmd_text);
         if let Err(e) = socket.write_all(&frame).await {
-            tracing::warn!(peer = %addr, uuid = %uuid, cmd_id, error = %e, "command delivery failed");
+            tracing::warn!(peer = %addr, uuid = %uuid, error = %e, "command delivery failed");
             continue;
         }
 
-        // Read the device's ACK response.
-        match read_device_ack(socket, cmd_id).await {
+        match read_device_ack(socket).await {
             Ok(true) => {
-                // Update status to "delivered" in Redis.
                 let mut delivered = val.clone();
                 if let Some(obj) = delivered.as_object_mut() {
                     obj.insert("status".to_string(), Value::String("delivered".to_string()));
@@ -129,7 +117,7 @@ pub async fn deliver_pending_commands(
                         if let Err(e) = result {
                             tracing::warn!(peer = %addr, uuid = %uuid, error = %e, "HSET delivered failed");
                         } else {
-                            tracing::info!(peer = %addr, uuid = %uuid, cmd_id, "command delivered");
+                            tracing::info!(peer = %addr, uuid = %uuid, cmd = %cmd_text, "command delivered");
                             delivered_count += 1;
                         }
                     }
@@ -139,7 +127,7 @@ pub async fn deliver_pending_commands(
                 }
             }
             Ok(false) => {
-                tracing::warn!(peer = %addr, uuid = %uuid, cmd_id, "device responded negatively to command");
+                tracing::warn!(peer = %addr, uuid = %uuid, "device responded negatively to command");
             }
             Err(e) => {
                 tracing::warn!(peer = %addr, uuid = %uuid, error = %e, "command delivery failed");
@@ -150,32 +138,18 @@ pub async fn deliver_pending_commands(
     delivered_count
 }
 
-/// Extracts the raw payload bytes from the JSON command value.
-///
-/// - `Value::String` → UTF-8/ASCII bytes (for cmd 108 SMS text)
-/// - `Value::Array`  → array of u8 values (for cmd 117 IO control or any binary payload)
-/// - anything else   → empty
-fn extract_payload(val: &Value) -> Vec<u8> {
-    match val.get("payload") {
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| v.as_u64().map(|b| b as u8))
-            .collect(),
-        _ => vec![],
-    }
-}
-
-/// Builds a Ruptela server→device frame.
+/// Builds a Ruptela server→device frame for SMS via GPRS (cmd_id `0x6C`).
 ///
 /// ```text
-/// [2B: packet_len (BE)] [1B: cmd_id] [payload bytes] [2B: CRC16]
+/// [2B: packet_len (BE)] [1B: 0x6C] [text bytes] [2B: CRC16]
 /// ```
-/// CRC16 covers `cmd_id + payload` (Kermit 0x8408).
-fn build_frame(cmd_id: u8, payload: &[u8]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(1 + payload.len());
-    body.push(cmd_id);
-    body.extend_from_slice(payload);
+/// CRC16 covers `cmd_id + text` (Kermit 0x8408).
+fn build_frame(cmd_text: &str) -> Vec<u8> {
+    let text_bytes = cmd_text.as_bytes();
+
+    let mut body = Vec::with_capacity(1 + text_bytes.len());
+    body.push(0x6Cu8); // cmd_id = SMS via GPRS
+    body.extend_from_slice(text_bytes);
 
     let packet_len = body.len() as u16;
     let crc = crc16(&body);
@@ -189,10 +163,9 @@ fn build_frame(cmd_id: u8, payload: &[u8]) -> Vec<u8> {
 
 /// Reads the device's ACK response to a server-sent command.
 ///
-/// Returns `Ok(true)` on a positive ACK, `Ok(false)` on a negative ACK or CRC
-/// mismatch, and `Err` on I/O or timeout errors.
-async fn read_device_ack(socket: &mut TcpStream, sent_cmd_id: u8) -> std::io::Result<bool> {
-    // Read the 2-byte length header.
+/// Returns `Ok(true)` on command ID `0x07` (SMS ACK), `Ok(false)` on a
+/// negative or unexpected response, and `Err` on I/O or timeout errors.
+async fn read_device_ack(socket: &mut TcpStream) -> std::io::Result<bool> {
     let mut len_buf = [0u8; 2];
     timeout(CMD_TIMEOUT, socket.read_exact(&mut len_buf))
         .await
@@ -203,7 +176,6 @@ async fn read_device_ack(socket: &mut TcpStream, sent_cmd_id: u8) -> std::io::Re
         return Ok(false);
     }
 
-    // Read body + 2-byte CRC.
     let mut buf = vec![0u8; packet_len + 2];
     timeout(CMD_TIMEOUT, socket.read_exact(&mut buf))
         .await
@@ -226,36 +198,6 @@ async fn read_device_ack(socket: &mut TcpStream, sent_cmd_id: u8) -> std::io::Re
         return Ok(false);
     }
 
-    let response_cmd = body[0];
-    let ack_byte = body.get(1).copied();
-
-    // Validate the response command ID matches what we expect.
-    let expected = expected_ack_cmd(sent_cmd_id);
-    if expected != 0 && response_cmd != expected {
-        tracing::warn!(
-            sent = format_args!("0x{:02X}", sent_cmd_id),
-            response = format_args!("0x{:02X}", response_cmd),
-            expected = format_args!("0x{:02X}", expected),
-            "unexpected response command in device ACK"
-        );
-        return Ok(false);
-    }
-
-    // For cmd 117 (Set IO Value): ack byte 0 = changed (success).
-    if sent_cmd_id == 0x75 {
-        return Ok(ack_byte == Some(0));
-    }
-
-    Ok(true)
-}
-
-/// Returns the expected response command ID from the device for a given server command.
-///
-/// Returns 0 for unknown commands (response cmd is not validated).
-fn expected_ack_cmd(sent_cmd_id: u8) -> u8 {
-    match sent_cmd_id {
-        0x6C => 0x07, // SMS via GPRS  → device replies with Cmd 7
-        0x75 => 0x11, // Set IO Value  → device replies with Cmd 17
-        _ => 0,       // unknown: skip response-cmd validation
-    }
+    // Command ID 0x07 = SMS via GPRS ACK.
+    Ok(body[0] == 0x07)
 }

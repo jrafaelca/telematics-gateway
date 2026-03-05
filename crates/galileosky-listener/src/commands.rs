@@ -10,7 +10,8 @@
 //! Field: a UUID string
 //! Value: JSON — `{"cmd_text": "status", "status": "pending"}`
 //!
-//! After successful delivery the status field is updated to `"delivered"`.
+//! After successful delivery the status is updated to `"delivered"` and the
+//! device's reply text (tag 0xE1) is stored in the `"response"` field.
 //!
 //! # Galileosky server→device framing
 //!
@@ -121,10 +122,11 @@ pub async fn deliver_pending_commands(
         }
 
         match read_device_reply(socket, cmd_number).await {
-            Ok(true) => {
+            Ok(Some(response_text)) => {
                 let mut delivered = val.clone();
                 if let Some(obj) = delivered.as_object_mut() {
                     obj.insert("status".to_string(), Value::String("delivered".to_string()));
+                    obj.insert("response".to_string(), Value::String(response_text.clone()));
                 }
                 match serde_json::to_string(&delivered) {
                     Ok(delivered_json) => {
@@ -133,7 +135,13 @@ pub async fn deliver_pending_commands(
                         if let Err(e) = result {
                             tracing::warn!(peer = %addr, uuid = %uuid, error = %e, "HSET delivered failed");
                         } else {
-                            tracing::info!(peer = %addr, uuid = %uuid, cmd_number, "command delivered");
+                            tracing::info!(
+                                peer = %addr,
+                                uuid = %uuid,
+                                cmd_number,
+                                response = %response_text,
+                                "command delivered"
+                            );
                             delivered_count += 1;
                         }
                     }
@@ -142,7 +150,7 @@ pub async fn deliver_pending_commands(
                     }
                 }
             }
-            Ok(false) => {
+            Ok(None) => {
                 tracing::warn!(peer = %addr, uuid = %uuid, cmd_number, "device did not confirm command");
             }
             Err(e) => {
@@ -190,12 +198,13 @@ fn build_command_frame(imei: u64, cmd_number: u32, cmd_text: &str) -> Vec<u8> {
 /// Reads a Galileosky packet from the device and checks whether it confirms
 /// the given `expected_cmd_number` via tag 0xE0.
 ///
-/// Returns `Ok(true)` on confirmation, `Ok(false)` on CRC mismatch, wrong
+/// Returns `Ok(Some(response_text))` on confirmation (with the reply text from
+/// tag 0xE1, or an empty string if absent), `Ok(None)` on CRC mismatch, wrong
 /// command number, or parse failure, and `Err` on I/O or timeout errors.
 async fn read_device_reply(
     socket: &mut TcpStream,
     expected_cmd_number: u32,
-) -> std::io::Result<bool> {
+) -> std::io::Result<Option<String>> {
     // Read header (1B).
     let mut hdr = [0u8; 1];
     timeout(CMD_TIMEOUT, socket.read_exact(&mut hdr))
@@ -236,26 +245,27 @@ async fn read_device_reply(
             crc_calc = format_args!("0x{:04X}", crc_calc),
             "CRC mismatch in device reply"
         );
-        return Ok(false);
+        return Ok(None);
     }
 
     // Parse tags and check command number.
     match parse_packet(&frame) {
         Ok(packet) => {
             if packet.tags.command_number == Some(expected_cmd_number) {
-                Ok(true)
+                let response = packet.tags.command_text.unwrap_or_default();
+                Ok(Some(response))
             } else {
                 tracing::warn!(
                     expected = expected_cmd_number,
                     got = ?packet.tags.command_number,
                     "command number mismatch in device reply"
                 );
-                Ok(false)
+                Ok(None)
             }
         }
         Err(e) => {
             tracing::warn!(error = %e, "failed to parse device reply");
-            Ok(false)
+            Ok(None)
         }
     }
 }

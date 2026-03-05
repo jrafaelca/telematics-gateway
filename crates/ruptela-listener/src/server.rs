@@ -116,12 +116,15 @@ pub async fn handle_connection(
                 let num_records = match &packet.payload {
                     Payload::Records { records, .. }
                     | Payload::ExtendedRecords { records, .. } => {
+                        let mut published = 0usize;
                         for record in records {
-                            let normalized = normalize::normalize(imei, record, received_at);
-                            let pub_clone = publisher.clone();
-                            tokio::spawn(async move { pub_clone.publish(&normalized).await });
+                            if let Some(normalized) = normalize::normalize(imei, record, received_at) {
+                                let pub_clone = publisher.clone();
+                                tokio::spawn(async move { pub_clone.publish(&normalized).await });
+                                published += 1;
+                            }
                         }
-                        records.len()
+                        published
                     }
                     Payload::Unknown { .. } => 0,
                 };

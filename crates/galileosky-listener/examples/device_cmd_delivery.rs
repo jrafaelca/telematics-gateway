@@ -42,7 +42,9 @@ const HEAD_PACKET_HEX: &str = concat!(
     "8F29"
 );
 
-const WAIT_FOR_CMD: Duration = Duration::from_secs(5);
+/// After each packet ACK the server may immediately deliver pending commands.
+/// This timeout determines how long to wait for commands before moving on.
+const WAIT_FOR_CMD: Duration = Duration::from_secs(3);
 
 fn from_hex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -183,6 +185,56 @@ fn build_device_reply(imei: u64, cmd_number: u32, reply_text: &str) -> Vec<u8> {
     frame
 }
 
+/// Reads the 3-byte ACK from the server and returns it.
+async fn read_ack(stream: &mut TcpStream) -> std::io::Result<[u8; 3]> {
+    let mut ack = [0u8; 3];
+    stream.read_exact(&mut ack).await?;
+    Ok(ack)
+}
+
+/// Reads and handles all pending server→device commands after an ACK.
+///
+/// The server may deliver one or more commands immediately after ACKing a
+/// packet.  This function drains them, replies to each, and returns the count
+/// of commands confirmed.
+async fn handle_server_commands(stream: &mut TcpStream, label: &str) -> u32 {
+    let mut count = 0u32;
+    loop {
+        match timeout(WAIT_FOR_CMD, read_server_command(stream)).await {
+            Err(_) => {
+                // No more commands within the timeout window.
+                break;
+            }
+            Ok(Err(e)) => {
+                eprintln!("Error reading command after {label}: {e}");
+                break;
+            }
+            Ok(Ok((tag_bytes, cmd_number_opt))) => {
+                let cmd_number = match cmd_number_opt {
+                    Some(n) => n,
+                    None => {
+                        println!("  Received packet without command number (tag 0xE0).");
+                        break;
+                    }
+                };
+
+                println!("  Command received: cmd_number=0x{cmd_number:08X}");
+                println!(
+                    "  raw tags ({} bytes): {:02X?}",
+                    tag_bytes.len(),
+                    &tag_bytes[..tag_bytes.len().min(32)]
+                );
+
+                let reply = build_device_reply(IMEI, cmd_number, "ok");
+                stream.write_all(&reply).await.expect("send reply failed");
+                println!("  Device reply sent (cmd_number echoed, text=\"ok\")");
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 #[tokio::main]
 async fn main() {
     println!("=== device_cmd_delivery ===");
@@ -205,59 +257,35 @@ async fn main() {
     let head = from_hex(HEAD_PACKET_HEX);
     println!("Sending HeadPack ({} bytes)...", head.len());
     stream.write_all(&head).await.expect("send failed");
-    let mut ack = [0u8; 3];
-    stream.read_exact(&mut ack).await.expect("read ACK failed");
+    let ack = read_ack(&mut stream).await.expect("read HeadPack ACK failed");
     println!("HeadPack ACK: {:02X?}", ack);
+
+    // Handle any commands the server delivers after HeadPack (IMEI just learned).
+    println!("Waiting for commands after HeadPack...");
+    let after_head = handle_server_commands(&mut stream, "HeadPack").await;
+    if after_head > 0 {
+        println!("  → {after_head} command(s) delivered after HeadPack.");
+    }
     println!();
 
     // 2. Send MainPack.
     let main = build_main_packet(IMEI);
     println!("Sending MainPack ({} bytes)...", main.len());
     stream.write_all(&main).await.expect("send failed");
-    let mut ack = [0u8; 3];
-    stream.read_exact(&mut ack).await.expect("read ACK failed");
+    let ack = read_ack(&mut stream).await.expect("read MainPack ACK failed");
     println!("MainPack ACK: {:02X?}", ack);
-    println!();
 
-    // 3. Wait for server commands.
-    println!("Waiting for server commands (timeout: {}s)...", WAIT_FOR_CMD.as_secs());
-    let mut delivered = 0u32;
-
-    loop {
-        match timeout(WAIT_FOR_CMD, read_server_command(&mut stream)).await {
-            Err(_) => {
-                println!("No more server commands (timeout).");
-                break;
-            }
-            Ok(Err(e)) => {
-                eprintln!("Error reading command: {e}");
-                break;
-            }
-            Ok(Ok((tag_bytes, cmd_number_opt))) => {
-                let cmd_number = match cmd_number_opt {
-                    Some(n) => n,
-                    None => {
-                        println!("Received packet without command number (tag 0xE0).");
-                        break;
-                    }
-                };
-
-                println!("Command received: cmd_number=0x{cmd_number:08X}");
-                println!("  raw tags ({} bytes): {:02X?}", tag_bytes.len(), &tag_bytes[..tag_bytes.len().min(32)]);
-
-                // Build and send the device reply echoing the command number.
-                let reply = build_device_reply(IMEI, cmd_number, "ok");
-                stream.write_all(&reply).await.expect("send reply failed");
-                println!("  Device reply sent (echoing cmd_number, text=\"ok\")");
-                println!();
-                delivered += 1;
-            }
-        }
+    // Handle any commands the server delivers after MainPack.
+    println!("Waiting for commands after MainPack...");
+    let after_main = handle_server_commands(&mut stream, "MainPack").await;
+    if after_main > 0 {
+        println!("  → {after_main} command(s) delivered after MainPack.");
     }
-
     println!();
-    if delivered > 0 {
-        println!("Commands confirmed: {delivered}");
+
+    let total = after_head + after_main;
+    if total > 0 {
+        println!("Commands confirmed: {total}");
         println!();
         println!("Verify in Redis that status = \"delivered\":");
         println!("  redis-cli HGET commands:{IMEI} test-uuid-1");

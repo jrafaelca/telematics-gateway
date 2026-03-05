@@ -10,7 +10,7 @@
 //! 2. Insert a pending command in Redis (the listener must be running):
 //!    ```bash
 //!    redis-cli HSET commands:13226005504143 test-uuid-1 \
-//!      '{"cmd_id":108,"payload":"hello world","status":"pending"}'
+//!      '{"cmd_text":"hello world","status":"pending"}'
 //!    ```
 //!
 //! 3. Run this example:
@@ -107,7 +107,7 @@ async fn main() {
     println!("Before running this example, insert a pending command in Redis:");
     println!(
         "  redis-cli HSET commands:{IMEI} test-uuid-1 \
-        '{{\"cmd_id\":108,\"payload\":\"hello world\",\"status\":\"pending\"}}'"
+        '{{\"cmd_text\":\"hello world\",\"status\":\"pending\"}}'"
     );
     println!();
 

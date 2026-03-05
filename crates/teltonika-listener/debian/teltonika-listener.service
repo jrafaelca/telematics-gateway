@@ -1,0 +1,21 @@
+[Unit]
+Description=Teltonika GPS TCP Listener
+After=network.target
+
+[Service]
+Type=simple
+User=teltonika
+LimitNOFILE=65536
+EnvironmentFile=/etc/teltonika/listener
+ExecStart=/usr/teltonika/listener \
+    --host ${LISTENER_HOST} \
+    --port ${LISTENER_PORT} \
+    --redis-url ${REDIS_URL} \
+    --shards ${SHARDS} \
+    --max-connections ${MAX_CONNECTIONS}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

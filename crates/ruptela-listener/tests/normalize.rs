@@ -29,7 +29,7 @@ fn make_record() -> Record {
 #[test]
 fn test_normalize_field_mapping() {
     let record = make_record();
-    let nr = normalize(13_226_005_504_143, &record, 1_700_000_000_000);
+    let nr = normalize(13_226_005_504_143, &record, 1_700_000_000_000).unwrap();
 
     assert_eq!(nr.imei, 13_226_005_504_143);
     assert_eq!(nr.received_at, 1_700_000_000_000);
@@ -46,20 +46,36 @@ fn test_normalize_field_mapping() {
 #[test]
 fn test_normalize_can_data_is_empty_object() {
     let record = make_record();
-    let nr = normalize(1, &record, 0);
+    let nr = normalize(1, &record, 0).unwrap();
     assert_eq!(nr.can_data, serde_json::json!({}));
 }
 
 #[test]
-fn test_normalize_with_io_elements_does_not_panic() {
+fn test_normalize_with_io_elements() {
     let mut record = make_record();
     record.io = vec![
         IoElement { id: 0x01, value: 100 },
         IoElement { id: 0x02, value: 200 },
     ];
-    // normalize() currently ignores IO — just ensure it doesn't panic.
-    let nr = normalize(99, &record, 42);
+    let nr = normalize(99, &record, 42).unwrap();
     assert_eq!(nr.imei, 99);
+    assert_eq!(nr.can_data["1"], 100);
+    assert_eq!(nr.can_data["2"], 200);
+}
+
+#[test]
+fn test_normalize_no_fix_returns_none() {
+    let mut record = make_record();
+    record.satellites = 0;
+    assert!(normalize(1, &record, 0).is_none());
+}
+
+#[test]
+fn test_normalize_null_island_returns_none() {
+    let mut record = make_record();
+    record.longitude = 0.0;
+    record.latitude = 0.0;
+    assert!(normalize(1, &record, 0).is_none());
 }
 
 #[test]
@@ -74,11 +90,16 @@ fn test_normalize_from_real_packet() {
         _ => panic!("Expected Payload::Records"),
     };
 
-    let nr = normalize(packet.imei, &records[0], 9_999_999);
+    // Records with satellites == 0 are filtered out; find the first valid one.
+    let nr = records
+        .iter()
+        .find_map(|r| normalize(packet.imei, r, 9_999_999))
+        .expect("no valid record found in packet");
+
     assert_eq!(nr.imei, 13_226_005_504_143);
-    assert_eq!(nr.timestamp, 0x5268CEF2);
-    assert!((nr.longitude - 42.6654266).abs() < 1e-6);
-    assert!((nr.latitude - 18.3451283).abs() < 1e-6);
+    assert_eq!(nr.satellites, 4);
+    assert!((nr.longitude - 42.6653283).abs() < 1e-6);
+    assert!((nr.latitude - 18.3452366).abs() < 1e-6);
 }
 
 // ── NormalizedRecord::to_fields() ─────────────────────────────────────────────
@@ -86,7 +107,7 @@ fn test_normalize_from_real_packet() {
 #[test]
 fn test_to_fields_key_names() {
     let record = make_record();
-    let nr = normalize(1, &record, 0);
+    let nr = normalize(1, &record, 0).unwrap();
     let fields = nr.to_fields();
     let keys: Vec<&str> = fields.iter().map(|(k, _)| *k).collect();
 
@@ -102,7 +123,7 @@ fn test_to_fields_key_names() {
 #[test]
 fn test_to_fields_precision() {
     let record = make_record();
-    let nr = normalize(1, &record, 0);
+    let nr = normalize(1, &record, 0).unwrap();
     let fields: std::collections::HashMap<_, _> = nr.to_fields().into_iter().collect();
 
     // longitude and latitude: 6 decimal places
@@ -119,7 +140,7 @@ fn test_to_fields_precision() {
 #[test]
 fn test_to_fields_scalar_values() {
     let record = make_record();
-    let nr = normalize(13_226_005_504_143, &record, 1_700_000_000_000);
+    let nr = normalize(13_226_005_504_143, &record, 1_700_000_000_000).unwrap();
     let fields: std::collections::HashMap<_, _> = nr.to_fields().into_iter().collect();
 
     assert_eq!(fields["imei"], "13226005504143");
