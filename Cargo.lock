@@ -608,6 +608,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "queclink-listener"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "redis",
+ "serde_json",
+ "shared",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"

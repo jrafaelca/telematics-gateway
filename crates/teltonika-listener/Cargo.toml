@@ -20,6 +20,18 @@ conf-files = ["/etc/teltonika/listener"]
 maintainer-scripts = "debian"
 systemd-units = [{ unit-name = "teltonika-listener", enable = true }]
 
+[[example]]
+name = "teltonika_device_records"
+path = "examples/device_records.rs"
+
+[[example]]
+name = "teltonika_device_extended_records"
+path = "examples/device_extended_records.rs"
+
+[[example]]
+name = "teltonika_device_cmd_delivery"
+path = "examples/device_cmd_delivery.rs"
+
 [dependencies]
 shared = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }

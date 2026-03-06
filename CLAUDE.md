@@ -10,15 +10,18 @@ cargo run -p ruptela-listener                    # start listener on port 7700
 cargo run -p galileosky-listener                 # start listener on port 7800
 cargo test --workspace                           # run all tests
 cargo test --workspace <test_name>               # run a single test (e.g. cargo test test_crc16_ack_body)
-cargo run -p ruptela-listener --example device_records          # simulate device sending cmd=0x01 Records
-cargo run -p ruptela-listener --example device_extended_records  # simulate device sending cmd=0x44 ExtendedRecords
-cargo run -p ruptela-listener --example device_cmd_delivery      # simulate full server→device command delivery
-cargo run -p galileosky-listener --example device_head_packet    # simulate HeadPack (0x01) with IMEI
-cargo run -p galileosky-listener --example device_main_packet    # simulate HeadPack + MainPack with GPS
-cargo run -p galileosky-listener --example device_cmd_delivery   # simulate full server→device command delivery
-cargo run -p teltonika-listener --example device_records          # simulate Codec 8 AVL packet with 2 GPS records
-cargo run -p teltonika-listener --example device_extended_records  # simulate Codec 8 Extended packet with IO elements
-cargo run -p teltonika-listener --example device_cmd_delivery      # simulate full server→device command delivery (Codec 12)
+cargo run -p ruptela-listener --example ruptela_device_records          # simulate device sending cmd=0x01 Records
+cargo run -p ruptela-listener --example ruptela_device_extended_records  # simulate device sending cmd=0x44 ExtendedRecords
+cargo run -p ruptela-listener --example ruptela_device_cmd_delivery      # simulate full server→device command delivery
+cargo run -p galileosky-listener --example galileosky_device_head_packet    # simulate HeadPack (0x01) with IMEI
+cargo run -p galileosky-listener --example galileosky_device_main_packet    # simulate HeadPack + MainPack with GPS
+cargo run -p galileosky-listener --example galileosky_device_cmd_delivery   # simulate full server→device command delivery
+cargo run -p teltonika-listener --example teltonika_device_records          # simulate Codec 8 AVL packet with 2 GPS records
+cargo run -p teltonika-listener --example teltonika_device_extended_records  # simulate Codec 8 Extended packet with IO elements
+cargo run -p teltonika-listener --example teltonika_device_cmd_delivery      # simulate full server→device command delivery (Codec 12)
+cargo run -p queclink-listener --example queclink_device_fri_report         # simulate GTFRI GPS report + server SACK
+cargo run -p queclink-listener --example queclink_device_heartbeat          # simulate GTHBD heartbeat + server SACK
+cargo run -p queclink-listener --example queclink_device_cmd_delivery       # simulate full server→device command delivery (AT+GTRTO)
 
 docker compose up --build                        # listener + valkey via Docker Compose
 ```
@@ -47,7 +50,7 @@ listeners/
     │   └── examples/             ← device simulators
     ├── galileosky-listener/      ← TCP listener binary (port 7800)
     │   └── ...
-    └── teltonika-listener/       ← TCP listener binary (port 7900)
+    ├── teltonika-listener/       ← TCP listener binary (port 7900)
         ├── src/
         │   ├── main.rs           ← CLI args, tracing init, connection semaphore
         │   ├── server.rs         ← handle_connection, IMEI handshake, send_response (4-byte record count)
@@ -59,16 +62,19 @@ listeners/
         └── examples/             ← device simulators
             ├── device_records.rs         (Codec 8, 2 records)
             └── device_extended_records.rs (Codec 8 Extended, IO elements)
+    └── queclink-listener/        ← TCP listener binary (port 7950)
         ├── src/
         │   ├── main.rs           ← CLI args, tracing init, connection semaphore
-        │   ├── server.rs         ← handle_connection, send_ack (3 bytes)
-        │   ├── crc.rs            ← CRC-16 MODBUS (poly 0xA001, init 0xFFFF)
-        │   ├── protocol.rs       ← parse_packet, TagSet, Coordinates, SpeedDir
-        │   ├── normalize.rs      ← normalize() converts TagSet → NormalizedRecord
+        │   ├── server.rs         ← handle_connection, BufReader ASCII line loop, send_sack
+        │   ├── protocol.rs       ← parse_line(), Message, FriRecord, HbdRecord, AckRecord
+        │   ├── normalize.rs      ← normalize() converts FriRecord → NormalizedRecord
         │   ├── presence.rs       ← devices:{imei} hash in Redis
-        │   └── commands.rs       ← server→device command delivery (Galileosky format)
-        ├── tests/                ← integration tests (crc, protocol, normalize)
+        │   └── commands.rs       ← server→device AT+GTRTO delivery
+        ├── tests/                ← integration tests (protocol, normalize)
         └── examples/             ← device simulators
+            ├── device_fri_report.rs  (GTFRI GPS report + SACK)
+            ├── device_heartbeat.rs   (GTHBD heartbeat + SACK)
+            └── device_cmd_delivery.rs (AT+GTRTO full flow)
 ```
 
 ## Architecture

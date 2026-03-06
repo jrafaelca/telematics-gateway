@@ -20,6 +20,18 @@ conf-files = ["/etc/galileosky/listener"]
 maintainer-scripts = "debian"
 systemd-units = [{ unit-name = "galileosky-listener", enable = true }]
 
+[[example]]
+name = "galileosky_device_head_packet"
+path = "examples/device_head_packet.rs"
+
+[[example]]
+name = "galileosky_device_main_packet"
+path = "examples/device_main_packet.rs"
+
+[[example]]
+name = "galileosky_device_cmd_delivery"
+path = "examples/device_cmd_delivery.rs"
+
 [dependencies]
 shared = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }
